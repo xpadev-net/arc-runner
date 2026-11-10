@@ -1,0 +1,116 @@
+name: Build and publish runner
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-image-publication
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/xpadev-net/arc-runner
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      base: ${{ steps.base.outputs.image }}
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Resolve one upstream digest for both architectures
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect ghcr.io/actions/actions-runner:latest --format '{{json .Manifest}}' | jq -er '.digest')
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "image=ghcr.io/actions/actions-runner@$digest" >> "$GITHUB_OUTPUT"
+          echo "Upstream: ghcr.io/actions/actions-runner@$digest" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      BASE_IMAGE: ${{ needs.resolve.outputs.base }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Build fresh candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx build --pull --no-cache --load \
+            --platform "linux/$ARCH" \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.base.name=$BASE_IMAGE" \
+            --label "org.opencontainers.image.base.digest=${BASE_IMAGE##*@}" \
+            --tag "candidate:$ARCH" .
+      - name: Smoke test as runner
+        shell: bash
+        run: docker run --rm -i "candidate:$ARCH" bash -s < scripts/smoke-test.sh
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push validated architecture image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$IMAGE:build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$ARCH"
+          docker tag "candidate:$ARCH" "$tag"
+          docker push "$tag"
+          printf 'Validated %s: `%s`\n\nUpstream: `%s`\n' "$ARCH" "$tag" "$BASE_IMAGE" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: [resolve, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish recovery tag and latest after both smoke tests pass
+        shell: bash
+        env:
+          BASE_IMAGE: ${{ needs.resolve.outputs.base }}
+        run: |
+          set -euo pipefail
+          build_tag="build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker buildx imagetools create \
+            --tag "$IMAGE:$build_tag" \
+            "$IMAGE:$build_tag-amd64" "$IMAGE:$build_tag-arm64"
+          docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$build_tag"
+          docker buildx imagetools inspect "$IMAGE:latest"
+          printf 'Published `%s:latest` and `%s:%s`\n\nUpstream: `%s`\n' \
+            "$IMAGE" "$IMAGE" "$build_tag" "$BASE_IMAGE" >> "$GITHUB_STEP_SUMMARY"
