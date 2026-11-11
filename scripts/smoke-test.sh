@@ -4,6 +4,8 @@ set -euo pipefail
 # Run inside the candidate image as its default user, without changing the image.
 test "$(id -un)" = runner
 test "$(dpkg-query -W -f='${Status}' libatomic1)" = 'install ok installed'
+test "$(dpkg-query -W -f='${Status}' gzip)" = 'install ok installed'
+test "$(printf 'gzip smoke test' | gzip -c | gzip -dc)" = 'gzip smoke test'
 test -x /home/runner/bin/Runner.Listener
 /home/runner/bin/Runner.Listener --version
 test -d /home/runner/externals
@@ -32,4 +34,4 @@ tar -xzf pnpm.tgz
 test -x package/pnpm
 actual=$(./package/pnpm --version)
 test "$actual" = "$version"
-printf 'Smoke test passed: user=runner, libatomic1 installed, runner executable, %s=%s\n' "$package" "$actual"
+printf 'Smoke test passed: user=runner, libatomic1 and gzip installed, gzip round trip passed, runner executable, %s=%s\n' "$package" "$actual"

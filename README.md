@@ -1,6 +1,6 @@
-# ARC runner with libatomic1
+# ARC runner with libatomic1 and gzip
 
-`ghcr.io/xpadev-net/arc-runner:latest` extends GitHub's official `ghcr.io/actions/actions-runner:latest` with **only `libatomic1`**, for standalone pnpm and other binaries that need `libatomic.so.1`.
+`ghcr.io/xpadev-net/arc-runner:latest` extends GitHub's official `ghcr.io/actions/actions-runner:latest` with `libatomic1`, for standalone pnpm and other binaries that need `libatomic.so.1`, and `gzip`, for compression and extraction.
 The runner user, entry points, Docker tooling and externals remain inherited from the official image.
 
 ## Use with ARC
@@ -23,7 +23,7 @@ Since `latest` is mutable, separately starting init and runner containers can re
 
 GitHub Actions builds daily at 03:23 UTC, on pushes to `main`, and through **Run workflow**.
 GitHub-hosted amd64 and arm64 runners build from the same resolved upstream digest without cached apt layers.
-Each architecture must run the runner executable, verify `libatomic1` and the default `runner` user, and download, integrity-check and execute the platform binary selected by the latest `@pnpm/exe` package.
+Each architecture must run the runner executable, verify `libatomic1`, `gzip` and the default `runner` user, check a gzip compression/decompression round trip, and download, integrity-check and execute the platform binary selected by the latest `@pnpm/exe` package.
 The smoke-test pnpm binary is temporary and is not installed in the published image.
 
 Only after both smoke tests pass does the workflow publish the multi-architecture `latest` tag.
