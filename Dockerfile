@@ -3,6 +3,6 @@ FROM ${BASE_IMAGE}
 
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libatomic1 gzip \
+    && apt-get install -y --no-install-recommends libatomic1 gzip xz-utils jq \
     && rm -rf /var/lib/apt/lists/*
 USER runner
